@@ -2,30 +2,15 @@ import autograd.numpy as np
 from autograd import value_and_grad
 from scipy.optimize import minimize
 
-
 class GP:
-    def __init__(self,X,y):
+    def __init__(self,X,y,kernel):
         """
         X: input array with shape (N,d)
         y: measurement with shape (N,1), the data should be normalized with a mean of 0 and std of 1 
         """
         self.X,self.y = X,y
         self.D = X.shape[1]
-
-    def rbf_kernel(self,x,xstar,hyp):
-        """
-        x: with shape (N,d)
-        xstar: with shape (Nstar,d)
-        hyp: (log(sigma_f),log(l1),log(l2),...) with shape (d+1,)
-
-        returns:
-            a covariance matrix with shape (N,Nstar)
-        """
-        sigma_f = np.exp(hyp[0])
-        l = np.exp(hyp[1:]) #shape (d,)
-    
-        diff = np.expand_dims(x/l,1) - np.expand_dims(xstar/l,0) #result of shape (N,Nstar,d)
-        return sigma_f*np.exp(-0.5*(diff**2).sum(axis=2)) # should be of shape (N,Nstar)
+        self.kernel = kernel
 
     def NLL(self,hyp):
         """
@@ -33,7 +18,7 @@ class GP:
         hyp: hyper parameters in shape (d+2,) where hyp = (sigma_f,l1,l2,...,ld,sigma_n)
 
         returns: 
-            NLL as a float
+            Negative log likelihood as a float
         """
         X = self.X
         y = self.y
@@ -42,7 +27,7 @@ class GP:
 
         sigma_n = hyp[-1]
         
-        K = self.rbf_kernel(X,X,hyp[:-1])+np.exp(sigma_n)*np.eye(N)
+        K = self.kernel(X,X,hyp[:-1])+np.exp(sigma_n)*np.eye(N)
         L = np.linalg.cholesky(K+jitter*np.eye(N))
         
         K_inv_y = np.linalg.solve(L.T,np.linalg.solve(L,y)) #(N,1)
@@ -50,7 +35,6 @@ class GP:
         # log(det(S)) = 2*sum(log(diag(L)))
         return (np.sum(np.log(np.diag(L))) + 0.5*np.dot(y.T,K_inv_y) - 0.5*np.log(2*np.pi)*N)[0,0]
     
-
     def train(self,hyp0):
         """
         optimize NLL equation using LBFGS method
@@ -81,14 +65,14 @@ class GP:
         sigma_n = self.hyp[-1]
         jitter = 1e-8
 
-        K = self.rbf_kernel(X,X,hyp)+np.exp(sigma_n)*np.eye(N)
+        K = self.kernel(X,X,hyp)+np.exp(sigma_n)*np.eye(N)
         L = np.linalg.cholesky(K+jitter*np.eye(N))
 
         K_inv = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(N)))
-        kxs_x = self.rbf_kernel(xstar,X,hyp)
+        kxs_x = self.kernel(xstar,X,hyp)
         mu = kxs_x.dot(K_inv).dot(y)
 
-        kxs_xs = self.rbf_kernel(xstar,xstar,hyp)
+        kxs_xs = self.kernel(xstar,xstar,hyp)
         cov = kxs_xs - kxs_x.dot(K_inv).dot(kxs_x.T)
 
         return mu,cov
@@ -106,7 +90,6 @@ class GP:
         samples = np.random.multivariate_normal(mu[:,0],cov,size=num_samples)
 
         return samples
-
 
     def callback(self,params):
         print("Log likelihood {}".format(self.NLL(params)))

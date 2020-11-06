@@ -3,7 +3,7 @@ from autograd import value_and_grad
 from scipy.optimize import minimize
 
 class GP:
-    def __init__(self,X,y,kernel):
+    def __init__(self,X,y,kernel,hyp):
         """
         X: input array with shape (N,d)
         y: measurement with shape (N,1), the data should be normalized with a mean of 0 and std of 1 
@@ -11,8 +11,9 @@ class GP:
         self.X,self.y = X,y
         self.D = X.shape[1]
         self.kernel = kernel
+        self.hyp = hyp
 
-    def NLL(self,hyp):
+    def NLL(self):
         """
         calculates the negative log likelihood for a GP process p(y|x) = \int p(y|f,x)p(f|x)df
         hyp: hyper parameters in shape (d+2,) where hyp = (sigma_f,l1,l2,...,ld,sigma_n)
@@ -25,9 +26,9 @@ class GP:
         N = self.X.shape[0]
         jitter = 1e-8
 
-        sigma_n = hyp[-1]
+        sigma_n = self.hyp[-1]
         
-        K = self.kernel(X,X,hyp[:-1])+np.exp(sigma_n)*np.eye(N)
+        K = self.kernel(X,X,self.hyp[:-1])+np.exp(sigma_n)*np.eye(N)
         L = np.linalg.cholesky(K+jitter*np.eye(N))
         
         K_inv_y = np.linalg.solve(L.T,np.linalg.solve(L,y)) #(N,1)
@@ -121,37 +122,86 @@ class multifidelity_GP:
         self.kernel = kernel
         self.hyp = hyp
 
-    def NLL(self):
+    def NLL(self,hyp):
         """
         calculates the negative log likelihood of multifidelity_GP
         """
-        sigma_nl = np.exp(self.hyp[-3])
-        sigma_nh = np.exp(self.hyp[-2])
-        rho = np.exp(self.hyp[-1])
+        sigma_nl = np.exp(hyp[-3])
+        sigma_nh = np.exp(hyp[-2])
+        rho = hyp[-1]
         jitter = 1e-8
         N = self.nl+self.nh
 
-        hyp_l = self.hyp[:self.D+1]
-        hyp_h = self.hyp[self.D+1:2*self.D+2]
+        hyp_l = hyp[:self.D+1]
+        hyp_h = hyp[self.D+1:2*self.D+2]
 
         kll = self.kernel(self.xl,self.xl,hyp_l)+\
-                (sigma_nl**2)*np.eye(self.nl) # kl(xl,xl,thetal)+sigma_nl^2*I
+                sigma_nl*np.eye(self.nl) # kl(xl,xl,thetal)+sigma_nl^2*I
         klh = rho*self.kernel(self.xl,self.xh,hyp_l) #rho*kl(xl,xh,thetal)
         khl = klh.T
         khh = (rho**2)*self.kernel(self.xh,self.xh,hyp_l)+\
                 self.kernel(self.xh,self.xh,hyp_h)+\
-                (sigma_nh**2)*np.eye(self.nh) # rho^2*kl(xh,xh,thetal)+kh(xh,xh,thetah)+sigmanh^2I
-        K = np.block([
-            [kll,klh],
-            [khl,khh]]) #shape(NL+NH,NL+NH)
+                sigma_nh*np.eye(self.nh) # rho^2*kl(xh,xh,thetal)+kh(xh,xh,thetah)+sigmanh^2I
+
+        K = np.vstack((np.hstack((kll,klh)),np.hstack((khl,khh))))
         
         y = np.vstack((self.yl,self.yh)) #shape(NL+NH,1)
 
         L = np.linalg.cholesky(K+jitter*np.eye(N))
 
-        Kinv_y = np.linalg.solve(L,np.linalg.solve(L.T,y))
+        Kinv_y = np.linalg.solve(L.T,np.linalg.solve(L,y))
         logdet_K = np.sum(np.log(np.diag(L)))
 
-        return (0.5*logdet_K+0.5*np.dot(y.T,Kinv_y)+0.5*N*np.log(2*np.pi))[0,0]
-    
+        return (logdet_K+0.5*np.dot(y.T,Kinv_y))[0,0]
+
+    def train(self):
+        results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+        self.hyp = results.x
+
+        return results.x
+
+    def predict(self,xstar):
+        """
+        Function to predict high fidelity outputs
+
+        xstar: the new points that needs to be predicted (Nstar,1)
+
+        returns: 
+            mu and covariance of the posterior distribution
+        """
+        sigma_nl = np.exp(self.hyp[-3])
+        sigma_nh = np.exp(self.hyp[-2])
+        rho = self.hyp[-1]
+        jitter = 1e-8
+        N = self.nl+self.nh
+        y = np.vstack((self.yl,self.yh)) 
+
+        hyp_l = self.hyp[:self.D+1]
+        hyp_h = self.hyp[self.D+1:2*self.D+2]
+
+        kxs_xs = (rho**2)*self.kernel(xstar,xstar,hyp_l)+self.kernel(xstar,xstar,hyp_h)
+        kxs_X = np.hstack((rho*self.kernel(xstar,self.xl,hyp_l),\
+                rho**2*self.kernel(xstar,self.xh,hyp_l)+self.kernel(xstar,self.xh,hyp_h)))
+
+        kll = self.kernel(self.xl,self.xl,hyp_l)+\
+                sigma_nl*np.eye(self.nl) # kl(xl,xl,thetal)+sigma_nl^2*I
+        klh = rho*self.kernel(self.xl,self.xh,hyp_l) #rho*kl(xl,xh,thetal)
+        khl = klh.T
+        khh = (rho**2)*self.kernel(self.xh,self.xh,hyp_l)+\
+                self.kernel(self.xh,self.xh,hyp_h)+\
+                sigma_nh*np.eye(self.nh) # rho^2*kl(xh,xh,thetal)+kh(xh,xh,thetah)+sigmanh^2I
+        
+        K = np.vstack((np.hstack((kll,klh)),np.hstack((khl,khh))))
+
+        L = np.linalg.cholesky(K+jitter*np.eye(N)) 
+        Kinv_y = np.linalg.solve(L.T,np.linalg.solve(L,y))
+        Kinv_kxs_X = np.linalg.solve(L.T,np.linalg.solve(L,kxs_X.T))
+
+        mu = kxs_X.dot(Kinv_y) #(Nstar,1)
+        cov = kxs_xs - kxs_X.dot(Kinv_kxs_X) #(Nstar,Nstar)
+
+        return mu,cov
+
+    def callback(self,params):
+        print("Log likelihood {}".format(self.NLL(params)))
 

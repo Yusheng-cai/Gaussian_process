@@ -93,3 +93,65 @@ class GP:
 
     def callback(self,params):
         print("Log likelihood {}".format(self.NLL(params)))
+
+
+class multifidelity_GP:
+    def __init__(self,x_l,y_l,x_h,y_h,kernel,hyp):
+        """
+        x_l: x data of the low fidelity model (shape (N_l,d))
+        y_l: y data of the low fidelity model (shape (N_l,1))
+        
+        x_h: x data of the high fidelity model (shape (N_h,d))
+        y_h: y data of the high fidelity model (shape (N_h,1))
+
+        kernel: the kernel that will be used with multifidelity_GP
+        hyp: in the form of (ln(sigma_fl),ln(theta1_l),...,ln(thetad_l),\
+                            ln(sigma_fh),ln(theta1_h),....,ln(thetad_h),\
+                            ln(sigma_nl),ln(sigma_nh),rho) (shape (2d+5,))
+        """
+        self.D = x_l.shape[1]
+        self.nl = x_l.shape[0]
+        self.nh = x_h.shape[0]
+
+        self.xl = x_l
+        self.yl = y_l
+        self.xh = x_h
+        self.yh = y_h
+        
+        self.kernel = kernel
+        self.hyp = hyp
+
+    def NLL(self):
+        """
+        calculates the negative log likelihood of multifidelity_GP
+        """
+        sigma_nl = np.exp(self.hyp[-3])
+        sigma_nh = np.exp(self.hyp[-2])
+        rho = np.exp(self.hyp[-1])
+        jitter = 1e-8
+        N = self.nl+self.nh
+
+        hyp_l = self.hyp[:self.D+1]
+        hyp_h = self.hyp[self.D+1:2*self.D+2]
+
+        kll = self.kernel(self.xl,self.xl,hyp_l)+\
+                (sigma_nl**2)*np.eye(self.nl) # kl(xl,xl,thetal)+sigma_nl^2*I
+        klh = rho*self.kernel(self.xl,self.xh,hyp_l) #rho*kl(xl,xh,thetal)
+        khl = klh.T
+        khh = (rho**2)*self.kernel(self.xh,self.xh,hyp_l)+\
+                self.kernel(self.xh,self.xh,hyp_h)+\
+                (sigma_nh**2)*np.eye(self.nh) # rho^2*kl(xh,xh,thetal)+kh(xh,xh,thetah)+sigmanh^2I
+        K = np.block([
+            [kll,klh],
+            [khl,khh]]) #shape(NL+NH,NL+NH)
+        
+        y = np.vstack((self.yl,self.yh)) #shape(NL+NH,1)
+
+        L = np.linalg.cholesky(K+jitter*np.eye(N))
+
+        Kinv_y = np.linalg.solve(L,np.linalg.solve(L.T,y))
+        logdet_K = np.sum(np.log(np.diag(L)))
+
+        return (0.5*logdet_K+0.5*np.dot(y.T,Kinv_y)+0.5*N*np.log(2*np.pi))[0,0]
+    
+

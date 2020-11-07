@@ -36,14 +36,14 @@ class GP:
         # log(det(S)) = 2*sum(log(diag(L)))
         return (np.sum(np.log(np.diag(L))) + 0.5*np.dot(y.T,K_inv_y) - 0.5*np.log(2*np.pi)*N)[0,0]
     
-    def train(self,hyp0):
+    def train(self):
         """
         optimize NLL equation using LBFGS method
 
         returns:
             parameters (d+2,1) [sigma_f,l1,...,ld,sigma_n]
         """
-        results = minimize(value_and_grad(self.NLL),hyp0,method='L-BFGS-B',jac=True,callback=self.callback)
+        results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
         self.hyp = results.x
 
         return results.x
@@ -154,8 +154,12 @@ class multifidelity_GP:
 
         return (logdet_K+0.5*np.dot(y.T,Kinv_y))[0,0]
 
-    def train(self):
-        results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+    def train(self,verbose=False):
+        if verbose:
+            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+        else:
+            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True)
+
         self.hyp = results.x
 
         return results.x

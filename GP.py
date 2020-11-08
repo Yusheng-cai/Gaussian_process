@@ -99,16 +99,16 @@ class GP:
 
         return samples
 
-    def draw_posterior(self,xp,num_samples=100):
+    def draw_posterior(self,xstar,num_samples=100):
         """
         draw from the posterior Gaussian p(f(x*)|y)
 
-        xp: input data of shape (N*,d)
+        xstar: input data of shape (Nstar,d)
 
         output:
-            samples drawn from posterior distribution (num_samples,N*)
+            samples drawn from posterior distribution (num_samples,Nstar)
         """
-        mu,cov = self.predict(xp)
+        mu,cov = self.predict(xstar)
         samples = np.random.multivariate_normal(mu[:,0],cov,size=num_samples)
 
         return (mu,cov,samples)
@@ -229,7 +229,10 @@ class multifidelity_GP:
 
     def draw_posterior(self,xstar,num_samples=100):
         """
-        function that draws the posterior f(x*|X,y)
+        function that draws the posterior f(xstar|X,y)
+
+        xstar: a matrix of data point with shape (Nstar,d)
+        num_samples: number of samples that one wants to draw
 
         returns: 
                 (mu,cov,samples)

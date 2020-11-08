@@ -13,7 +13,7 @@ class GP:
         self.kernel = kernel
         self.hyp = hyp
 
-    def NLL(self):
+    def NLL(self,hyp):
         """
         calculates the negative log likelihood for a GP process p(y|x) = \int p(y|f,x)p(f|x)df
         hyp: hyper parameters in shape (d+2,) where hyp = (sigma_f,l1,l2,...,ld,sigma_n)
@@ -26,9 +26,9 @@ class GP:
         N = self.X.shape[0]
         jitter = 1e-8
 
-        sigma_n = self.hyp[-1]
+        sigma_n = hyp[-1]
         
-        K = self.kernel(X,X,self.hyp[:-1])+np.exp(sigma_n)*np.eye(N)
+        K = self.kernel(X,X,hyp[:-1])+np.exp(sigma_n)*np.eye(N)
         L = np.linalg.cholesky(K+jitter*np.eye(N))
         
         K_inv_y = np.linalg.solve(L.T,np.linalg.solve(L,y)) #(N,1)
@@ -36,14 +36,18 @@ class GP:
         # log(det(S)) = 2*sum(log(diag(L)))
         return (np.sum(np.log(np.diag(L))) + 0.5*np.dot(y.T,K_inv_y) - 0.5*np.log(2*np.pi)*N)[0,0]
     
-    def train(self):
+    def train(self,verbose=False):
         """
         optimize NLL equation using LBFGS method
 
         returns:
             parameters (d+2,1) [sigma_f,l1,...,ld,sigma_n]
         """
-        results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+        if verbose:
+            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+        else:
+            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True)
+
         self.hyp = results.x
 
         return results.x
@@ -77,6 +81,23 @@ class GP:
         cov = kxs_xs - kxs_x.dot(K_inv).dot(kxs_x.T)
 
         return mu,cov
+        
+    def draw_prior(self,x,num_samples=100):
+        """
+        draw samples from prior distribution
+
+        x: the x points that we want to calculate prior at (N,1) 
+        num_samples: the number of samples that we want to draw from the prior
+
+        returns:
+            a matrix containing all prior samples with shape (num_samples,N)
+        """
+        N = x.shape[0]
+        mu = np.zeros((N,))
+        cov = self.kernel(x,x,self.hyp[:-1])
+        samples = np.random.multivariate_normal(mu,cov,num_samples)
+
+        return samples
 
     def draw_posterior(self,xp,num_samples=100):
         """
@@ -90,7 +111,7 @@ class GP:
         mu,cov = self.predict(xp)
         samples = np.random.multivariate_normal(mu[:,0],cov,size=num_samples)
 
-        return samples
+        return (mu,cov,samples)
 
     def callback(self,params):
         print("Log likelihood {}".format(self.NLL(params)))
@@ -205,6 +226,19 @@ class multifidelity_GP:
         cov = kxs_xs - kxs_X.dot(Kinv_kxs_X) #(Nstar,Nstar)
 
         return mu,cov
+
+    def draw_posterior(self,xstar,num_samples=100):
+        """
+        function that draws the posterior f(x*|X,y)
+
+        returns: 
+                (mu,cov,samples)
+                where samples is with shape (num_samples,len(xstar))
+        """
+        mu,cov = self.predict(xstar)
+        samples = np.random.multivariate_normal(mu[:,0],cov,size=num_samples)
+
+        return (mu,cov,samples)
 
     def callback(self,params):
         print("Log likelihood {}".format(self.NLL(params)))

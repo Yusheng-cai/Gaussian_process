@@ -1,6 +1,6 @@
-import autograd.numpy as np
-from autograd import value_and_grad
+import numpy as np
 from scipy.optimize import minimize
+from autograd.numpy.linalg import lstsq
 
 class GP:
     def __init__(self,X,y,kernel,hyp):
@@ -31,10 +31,10 @@ class GP:
         K = self.kernel(X,X,hyp[:-1])+np.exp(sigma_n)*np.eye(N)
         L = np.linalg.cholesky(K+jitter*np.eye(N))
         
-        K_inv_y = np.linalg.solve(L.T,np.linalg.solve(L,y)) #(N,1)
+        K_inv_y = np.linalg.lstsq(L.T,np.linalg.lstsq(L,y,rcond=-1)[0],rcond=-1)[0] #(N,1)
 
         # log(det(S)) = 2*sum(log(diag(L)))
-        return (np.sum(np.log(np.diag(L))) + 0.5*np.dot(y.T,K_inv_y) - 0.5*np.log(2*np.pi)*N)[0,0]
+        return (np.sum(np.log(np.diag(L))) + 0.5*np.dot(y.T,K_inv_y) + 0.5*np.log(2*np.pi)*N)[0,0]
     
     def train(self,verbose=False):
         """
@@ -44,9 +44,9 @@ class GP:
             parameters (d+2,1) [sigma_f,l1,...,ld,sigma_n]
         """
         if verbose:
-            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+            results = minimize(self.NLL,self.hyp,method='L-BFGS-B',callback=self.callback)
         else:
-            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True)
+            results = minimize(self.NLL,self.hyp,method='L-BFGS-B')
 
         self.hyp = results.x
 
@@ -169,17 +169,17 @@ class multifidelity_GP:
         y = np.vstack((self.yl,self.yh)) #shape(NL+NH,1)
 
         L = np.linalg.cholesky(K+jitter*np.eye(N))
+        Kinv_y = np.linalg.lstsq(L.T,np.linalg.lstsq(L,y,rcond=-1)[0],rcond=-1)[0] 
 
-        Kinv_y = np.linalg.solve(L.T,np.linalg.solve(L,y))
         logdet_K = np.sum(np.log(np.diag(L)))
 
         return (logdet_K+0.5*np.dot(y.T,Kinv_y))[0,0]
 
     def train(self,verbose=False):
         if verbose:
-            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True,callback=self.callback)
+            results = minimize(self.NLL,self.hyp,method='L-BFGS-B',callback=self.callback)
         else:
-            results = minimize(value_and_grad(self.NLL),self.hyp,method='L-BFGS-B',jac=True)
+            results = minimize(self.NLL,self.hyp,method='L-BFGS-B')
 
         self.hyp = results.x
 
@@ -219,8 +219,8 @@ class multifidelity_GP:
         K = np.vstack((np.hstack((kll,klh)),np.hstack((khl,khh))))
 
         L = np.linalg.cholesky(K+jitter*np.eye(N)) 
-        Kinv_y = np.linalg.solve(L.T,np.linalg.solve(L,y))
-        Kinv_kxs_X = np.linalg.solve(L.T,np.linalg.solve(L,kxs_X.T))
+        Kinv_y = np.linalg.lstsq(L.T,np.linalg.lstsq(L,y,rcond=-1)[0],rcond=-1)[0]
+        Kinv_kxs_X = np.linalg.lstsq(L.T,np.linalg.lstsq(L,kxs_X.T,rcond=-1)[0],rcond=-1)[0]
 
         mu = kxs_X.dot(Kinv_y) #(Nstar,1)
         cov = kxs_xs - kxs_X.dot(Kinv_kxs_X) #(Nstar,Nstar)

@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.stats import norm
 from scipy.optimize import minimize
 from autograd.numpy.linalg import lstsq
 
@@ -73,7 +74,7 @@ class GP:
         K = self.kernel(X,X,hyp)+np.exp(sigma_n)*np.eye(N)
         L = np.linalg.cholesky(K+jitter*np.eye(N))
 
-        K_inv = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(N)))
+        K_inv = np.linalg.lstsq(L.T,np.linalg.lstsq(L,np.eye(N),rcond=-1)[0],rcond=-1)[0]
         kxs_x = self.kernel(xstar,X,hyp)
         mu = kxs_x.dot(K_inv).dot(y)
 
@@ -112,6 +113,32 @@ class GP:
         samples = np.random.multivariate_normal(mu[:,0],cov,size=num_samples)
 
         return (mu,cov,samples)
+
+    def Expected_Improvement(self,Xstar):
+        """
+        Outputs an acquisition function which describes the likelihood of improve 
+        Acquisition function is obtained from utility function, this case, we define 
+        our utility function as 
+                    u(x) = max{0,fmin-f(x)}
+        where fmin is the minimum f(x) that we have observed so far in the observations.
+        The acquisition function is defined as 
+                    E(u(x)) = \int_{-\infty}^{fmin}(fmin-f(x)N(mu(x),sigma(x,x))df
+                            = (fmin-mu(x))\Phi(fmin|mu(x),sigma(x,x))+sigma(x,x)N(fmin|mu(x),sigma(x,x))
+        where \Phi is the Gaussian cdf and N is the Gaussian pdf.
+           
+        inputs:
+            Xstar: an input vector of shape (N*,1)
+        outputs:
+            a vector of alpha_EI of shape (N*,1)
+        """
+        mu_pred,cov_pred = self.predict(Xstar)
+        best = np.min(self.y)
+        std = np.abs(np.diag(cov_pred))[:,np.newaxis]
+        Z = (best - mu_pred)/std
+
+        alpha_EI = (best - mu_pred)*norm.cdf(Z)+std*norm.pdf(Z)
+
+        return alpha_EI 
 
     def callback(self,params):
         print("Log likelihood {}".format(self.NLL(params)))
